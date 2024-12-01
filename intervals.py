@@ -1,4 +1,5 @@
 from numpy import *
+from builtins import min
 
 def find_best_interval(xs, ys, k):
     assert all(array(xs) == array(sorted(xs))), "xs must be sorted!"
