@@ -31,6 +31,7 @@ class Assignment2(object):
         return data_samples
 
 
+
     def experiment_m_range_erm(self, m_first, m_last, step, k, T):
         """Runs the ERM algorithm.
         Calculates the empirical error and the true error.
@@ -57,11 +58,14 @@ class Assignment2(object):
             avg_true_errors.append(sum_true_error / T)
             n_values.append(n)
 
-        avg_empirical_errors = np.array(avg_empirical_errors)
-        avg_true_errors = np.array(avg_true_errors)
+        error_matrix = np.array([avg_empirical_errors, avg_true_errors])
+
         n_values = np.array(n_values)
 
-        self.plot_errors(n_values, avg_empirical_errors, avg_true_errors)
+        self.plot_errors(n_values, error_matrix[0], error_matrix[1],'n','Empirical Error vs. True Error')
+
+        return error_matrix
+
 
 
     def experiment_k_range_erm(self, m, k_first, k_last, step):
@@ -74,11 +78,12 @@ class Assignment2(object):
 
         Returns: The best k value (an integer) according to the ERM algorithm.
         """
-        for k in range(k_first,k_last,step):
+
+        best_k, error_matrix, k_values = self.calc_errors_best_k(k_first, k_last, m, step)
+        self.plot_errors(k_values,error_matrix[0],error_matrix[1],'k','Empirical Error vs. True Error')
+        return best_k
 
 
-        # TODO: Implement the loop
-        pass
 
     def experiment_k_range_srm(self, m, k_first, k_last, step):
         """Run the experiment in (c).
@@ -91,8 +96,14 @@ class Assignment2(object):
 
         Returns: The best k value (an integer) according to the SRM algorithm.
         """
-        # TODO: Implement the loop
-        pass
+        best_k, error_matrix, k_values = self.calc_errors_best_k(k_first, k_last, m, step)
+        penalty_arr = np.array([2*np.sqrt((2*k + np.log(0.1 / k**2))/m) for k in k_values]) # Calculate the penalty
+        index_min = np.argmin(penalty_arr + error_matrix[0])
+        best_k = k_values[index_min]
+        self.plot_with_penalty(error_matrix, k_values, penalty_arr)
+        return best_k
+
+
 
     def cross_validation(self, m):
         """Finds a k that gives a good test error.
@@ -100,8 +111,35 @@ class Assignment2(object):
 
         Returns: The best k value (an integer) found by the cross validation algorithm.
         """
-        # TODO: Implement me
-        pass
+
+        data = self.sample_from_D(m)
+        data[1] = data[1].astype(int)
+
+        # choose random indices for training and validation sets
+        indices = np.random.permutation(len(data))
+
+        # Split the indices
+        train_size = int(0.8 * len(data))
+        train_indices = indices[:train_size]
+        val_indices = indices[train_size:]
+
+        # Create training and validation sets
+        train_set, val_set = data[train_indices], data[val_indices]
+
+        xs_train, ys_train = self.sort_data_samples(train_set)
+
+        erm_list,empirical_errors = [], []
+
+        # Find the best intervals for k=1,2,...,10
+        for k in range(1, 11):
+            best_intervals, best_error = intervals.find_best_interval(xs_train, ys_train, k)
+            erm_list.append(best_intervals)
+            empirical_errors.append(np.sum(best_error)/len(train_set))
+
+        # Find the best intervals from the list of intervals regarding validation set
+        best_intervals, min_error, best_index = self.find_val_best_intervals(erm_list, val_set)
+        return best_index
+
 
     #################################
     # Place for additional methods
@@ -117,14 +155,12 @@ class Assignment2(object):
             return [0,0]
         return [max(interval1[0], interval2[0]), min(interval1[1], interval2[1])]
 
-
     def calc_intersection_err(self,interval1, interval2, err_prob):
         """
-        This function calculates the intersection error of two intervals
+        This function calculates the error for the intersection of two intervals
         :param interval1: The first interval
         :param interval2: The second interval
         :param err_prob: The probability of error in the intersection
-        :param err: The current error
         :return: The updated error
         """
         intersection = self.intersect(interval1, interval2)
@@ -161,26 +197,6 @@ class Assignment2(object):
 
         return np.sum(err_likely_1) + np.sum(err_likely_0)
 
-    def plot_errors(self, n_values, avg_empirical_errors, avg_true_errors):
-        """
-        This function plots the empirical and true errors
-        :param n_values: The values of n
-        :param avg_empirical_errors: The average empirical errors
-        :param avg_true_errors: The average true errors
-        """
-        plt.clf()  # Clear current figure
-        plt.close()
-        plt.figure(figsize=(10, 6))
-        plt.plot(n_values, avg_empirical_errors, marker='o',linestyle='-', color='b',label="Empirical Error")
-        plt.plot(n_values, avg_true_errors, marker='s', linestyle='-', color='r',label="True Error")
-        plt.title('Empirical Error vs. True Error')
-        plt.xlabel('n')
-        plt.ylabel('Error')
-        plt.legend()
-        plt.grid()
-        plt.show()
-
-
     def calc_sum_errors(self, k, n, sum_empirical_error, sum_true_error):
         """
         This function calculates the sum of empirical and true errors over n samples and k intervals
@@ -191,10 +207,7 @@ class Assignment2(object):
         :return: the updated sum of empirical and true errors
         """
         data_samples = self.sample_from_D(n)
-        sorted_indices = np.argsort(data_samples[:, 0])  # Indices that would sort the first column
-        sorted_data = data_samples[sorted_indices] # Make second column sorted according to the first column
-        xs = sorted_data[:, 0]
-        ys = sorted_data[:, 1].astype(int)
+        xs, ys = self.sort_data_samples(data_samples)
         best_intervals, best_error = intervals.find_best_interval(xs, ys, k)
         expected_error = np.sum(best_error)/n
         true_error = self.calc_true_error(best_intervals)
@@ -202,13 +215,121 @@ class Assignment2(object):
         sum_true_error += true_error
         return sum_empirical_error, sum_true_error
 
+    def sort_data_samples(self, data_samples):
+        sorted_indices = np.argsort(data_samples[:, 0])  # Indices that would sort the first column
+        sorted_data = data_samples[sorted_indices]  # Make second column sorted according to the first column
+        xs = sorted_data[:, 0]
+        ys = sorted_data[:, 1].astype(int)
+        return xs, ys
+
+    def calc_errors_best_k(self, k_first, k_last, m, step):
+        """
+        This function calculates the empirical and true errors for all k values in the range
+        :param k_first: the first k value
+        :param k_last: the last k value
+        :param m: the number of samples
+        :param step: the step size
+        :return: the best k value, the error matrix and the k values
+        """
+        arr_empirical_error, arr_true_error, k_values = [], [], []
+        min_empirical_error, best_k = 1, -1
+        for k in range(k_first, k_last, step):
+            sum_empirical_error, sum_true_error = self.calc_sum_errors(k, m, 0, 0)
+            if sum_empirical_error < min_empirical_error:
+                min_empirical_error = sum_empirical_error
+                best_k = k
+            arr_empirical_error.append(sum_empirical_error)
+            arr_true_error.append(sum_true_error)
+            k_values.append(k)
+        error_matrix = np.array([arr_empirical_error, arr_true_error])
+        k_values = np.array(k_values)
+        return best_k, error_matrix, k_values
+
+    def plot_errors(self, x_values, avg_empirical_errors, avg_true_errors, x_label, title):
+        """
+        This function plots the empirical and true errors
+        :param title:
+        :param x_label: the label of the x axis
+        :param x_values: The values of n
+        :param avg_empirical_errors: The average empirical errors
+        :param avg_true_errors: The average true errors
+        """
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(x_values, avg_empirical_errors, marker='o', linestyle='-', color='b', label="Empirical Error")
+        plt.plot(x_values, avg_true_errors, marker='o', linestyle='-', color='r', label="True Error")
+        plt.title(title)
+        plt.xlabel(x_label)
+        plt.ylabel('Error')
+        plt.legend()
+        plt.grid()
+        plt.show()
+
+    def plot_with_penalty(self, error_matrix, k_values, penalty_arr):
+        """
+        This function plots the empirical error, true error, penalty and empirical error + penalty
+        :param error_matrix: the error matrix, containing the empirical and true errors
+        :param k_values: the k values (x axis)
+        :param penalty_arr: the penalty array
+        """
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(k_values, penalty_arr, marker='o', linestyle='-', color='g', label="Penalty")
+        plt.plot(k_values, penalty_arr + error_matrix[0], marker='o', linestyle='-', color='y',
+                 label="Empirical Error + Penalty")
+        plt.plot(k_values, error_matrix[0], marker='o', linestyle='-', color='b', label="Empirical Error")
+        plt.plot(k_values, error_matrix[1], marker='o', linestyle='-', color='r', label="True Error")
+        plt.title('Empirical Error, True Error, Penalty and Empirical Error + Penalty')
+        plt.xlabel('k')
+        plt.ylabel('Error')
+        plt.legend()
+        plt.grid()
+        plt.show()
+
+    def calculate_validation_error(self, intervals_list, validation_data):
+        """
+        This function calculates the validation error of a given list of intervals
+        :param intervals_list: the list of intervals
+        :param validation_data: the validation data
+        :return: the validation error
+        """
+
+        def is_in_interval(x, interval):
+            return interval[0] <= x <= interval[1]
+
+        errors = 0
+        for x, y in validation_data:
+            # Check if x is in any interval in the list, if so, predict 1, otherwise 0
+            predicted_y = any(is_in_interval(x, interval) for interval in intervals_list)
+            errors += (predicted_y != y)
+        return errors / len(validation_data)
+
+    def find_val_best_intervals(self, intervals_array, validation_data):
+        """
+        This function finds the best intervals from a given array of intervals
+        :param intervals_array: the array of intervals
+        :param validation_data: the validation data
+        :return: the best intervals, the validation error, and the index of the best intervals
+        """
+        min_error = float('inf')  # Initialize the minimum error to infinity, so the first error will be smaller
+        best_intervals = None
+        best_index = -1
+
+        for index, intervals_list in enumerate(intervals_array): # We need enumerate to get the index of the best interval
+            error = self.calculate_validation_error(intervals_list, validation_data)
+            if error < min_error:
+                min_error = error # Update the minimum error
+                best_intervals = intervals_list # Update the best intervals
+                best_index = index # Update the index of the best intervals
+
+        return best_intervals, min_error, best_index
     #################################
 
 
 if __name__ == '__main__':
     ass = Assignment2()
-    #ass.experiment_m_range_erm(10, 100, 5, 3, 100)
+    ass.experiment_m_range_erm(10, 100, 5, 3, 100)
     ass.experiment_k_range_erm(1500, 1, 10, 1)
-    # ass.experiment_k_range_srm(1500, 1, 10, 1)
-    # ass.cross_validation(1500)
+    ass.experiment_k_range_srm(1500, 1, 10, 1)
+    ass.cross_validation(1500)
 
